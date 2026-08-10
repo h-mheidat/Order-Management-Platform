@@ -1,0 +1,129 @@
+# Local infrastructure for the Order Management Platform.
+#
+#   docker compose up -d                    -> postgres, redis, kafka
+#   docker compose --profile tools up -d    -> the above + kafka-ui on :8081
+#
+# Credentials come from .env (gitignored). Copy .env.example to .env before the first run.
+# No `version:` key: it is obsolete in Compose v2 and only produces a warning.
+
+name: oms
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: oms-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Explicit, deterministic initdb settings instead of whatever the host locale implies.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # -U/-d matter: without them pg_isready reports ready while still running initdb scripts.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [oms-net]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: oms-redis
+    # A password even locally: dev config that differs from prod config is how prod ends up
+    # with an open Redis. --appendonly yes so cached data survives a container restart.
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    environment:
+      # Consumed by redis-cli inside the healthcheck; avoids putting the password on the CLI,
+      # where it would show up in `ps` output inside the container.
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [oms-net]
+    restart: unless-stopped
+
+  kafka:
+    # KRaft mode - single node acting as both broker and controller. No ZooKeeper.
+    image: apache/kafka:4.0.0
+    container_name: oms-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # Two client listeners on purpose:
+      #   PLAINTEXT      kafka:9092        - other containers on oms-net
+      #   PLAINTEXT_HOST localhost:29092   - the Spring Boot app running on the host JVM
+      # A single listener advertising `kafka:9092` is the classic failure: the host resolves
+      # the bootstrap address, then gets handed an unreachable broker hostname in the metadata.
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+
+      # Single broker, so nothing can be replicated. Production values are 3 / 3 / 2.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+
+      # Rebalances are near-instant on a single-node dev cluster; the 3s default delay just
+      # makes the first consumer poll look slow.
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Left on for local convenience. Stage 10 creates topics explicitly via KafkaAdmin -
+      # relying on auto-creation in production hides typos in topic names.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+    ports:
+      - "${KAFKA_HOST_PORT:-29092}:29092"
+    volumes:
+      - kafkadata:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    networks: [oms-net]
+    restart: unless-stopped
+
+  kafka-ui:
+    # Off by default. `docker compose --profile tools up -d` when you want to inspect
+    # topics, partitions, consumer lag and message payloads (useful from stage 10 onward).
+    image: provectuslabs/kafka-ui:latest
+    container_name: oms-kafka-ui
+    profiles: [tools]
+    environment:
+      KAFKA_CLUSTERS_0_NAME: oms-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    ports:
+      - "${KAFKA_UI_PORT:-8081}:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [oms-net]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  kafkadata:
+
+networks:
+  oms-net:
+    driver: bridge
