@@ -194,11 +194,42 @@
                 </configuration>
             </plugin>
 
+            <!-- Resolves dependency paths into properties, so the surefire argLine below can point
+                 at the Mockito jar by coordinates instead of a hardcoded local path. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Loads Mockito's Byte Buddy agent explicitly. Mockito currently self-attaches and
+                 warns that it will stop working, because the JDK is removing dynamic agent loading.
+                 Declaring it here means the build does not break on a future JDK upgrade. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-javaagent:${org.mockito:mockito-core:jar}</argLine>
+                </configuration>
+            </plugin>
+
             <!-- *IT classes are integration tests: they need Docker, so they run in `verify`,
                  never in the fast `test` phase. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <!-- Integration tests need the agent too: Spring's MockitoTestExecutionListener
+                         initialises Mockito for every @SpringBootTest, whether or not the test
+                         declares a mock. -->
+                    <argLine>-javaagent:${org.mockito:mockito-core:jar}</argLine>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>
