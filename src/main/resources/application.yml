@@ -1,0 +1,139 @@
+spring:
+  application:
+    name: orders
+
+  # Every value below reads from the environment with a local-dev fallback. Nothing secret is
+  # committed, and deploying to another environment is a matter of env vars, not a file edit.
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:orders}
+    username: ${POSTGRES_USER:orders_app}
+    password: ${POSTGRES_PASSWORD:change_me_locally}
+    hikari:
+      # Pinned rather than left to the default of 10. The pool is the real concurrency limit of
+      # the service: N instances x max-pool-size must stay under Postgres max_connections.
+      maximum-pool-size: 10
+      minimum-idle: 2
+      # Fail fast when the pool is exhausted instead of piling up request threads.
+      connection-timeout: 3000
+      max-lifetime: 1800000
+      pool-name: oms-hikari
+
+  jpa:
+    # Flyway owns the schema. `validate` would fail at startup until stage 2 adds entities and
+    # migrations, so stage 1 stays at `none` and switches to `validate` in stage 2.
+    hibernate:
+      ddl-auto: none
+    # Off deliberately. With open-in-view enabled the EntityManager stays open for the whole
+    # request, lazy loads silently succeed inside the view layer, and N+1 problems become
+    # invisible until production. Off means LazyInitializationException surfaces at dev time.
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          # Batch writes; required later for the order-items insert to be one round trip.
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+        # Fail loudly if any query returns entities in memory pagination mode.
+        query:
+          fail_on_pagination_over_collection_fetch: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:change_me_locally}
+      # Both timeouts are short on purpose: a cache is an optimisation, so an unavailable Redis
+      # must fail in milliseconds and let the request fall through to Postgres, not hold a
+      # request thread hostage. Stage 7 adds the fallback behaviour itself.
+      timeout: 500ms
+      connect-timeout: 500ms
+      lettuce:
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+
+  kafka:
+    # The host-facing listener from docker-compose.yml (PLAINTEXT_HOST). Inside a container
+    # this becomes kafka:9092 via KAFKA_BOOTSTRAP_SERVERS.
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    client-id: ${spring.application.name}
+    consumer:
+      group-id: orders-service
+      auto-offset-reset: earliest
+      # Acknowledgement is handled by the container, not by the broker's auto-commit timer:
+      # auto-commit can acknowledge a record whose handler later threw.
+      enable-auto-commit: false
+    listener:
+      ack-mode: record
+    producer:
+      # Stage 19 talking point: acks=all + idempotence is what makes the outbox publisher safe
+      # to retry without duplicating or losing events.
+      acks: all
+      properties:
+        enable.idempotence: true
+
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    # No stack traces or internal messages in error responses. Stage 13 replaces this with a
+    # @ControllerAdvice and a single documented error contract.
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      # DEV ONLY. Exposes component details (db / redis / kafka) unauthenticated, which is how
+      # stage 1 is verified. Stage 19 must change this to `when-authorized` before any deploy.
+      show-details: always
+      show-components: always
+      # Which dependencies are allowed to stop traffic reaching this instance.
+      #
+      # The root /actuator/health aggregates everything and is for humans and dashboards - it
+      # goes DOWN if any dependency is unhappy, which is what you want when debugging. What an
+      # orchestrator probes is different, and must only include dependencies the service cannot
+      # serve a request without:
+      #
+      #   db      -> in. No database, no orders. Nothing to fall back to.
+      #   redis   -> out. A cache is an optimisation; stage 7 falls back to Postgres on a miss
+      #              or an error. Failing readiness here would pull every instance out of the
+      #              load balancer over a slower-but-correct path.
+      #   kafka   -> out. This is exactly what the outbox pattern (stage 19) buys us: the order
+      #              and its event commit to Postgres in one transaction, and the publisher
+      #              drains the outbox when the broker returns. Order creation keeps working
+      #              through a broker outage, so a broker outage must not stop traffic.
+      #
+      # Both stay visible on the root endpoint - excluded from readiness is not the same as
+      # unmonitored. Alerting on them is stage 17's job.
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+  health:
+    probes:
+      enabled: true
+  info:
+    env:
+      enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.example.orders: DEBUG
+  pattern:
+    # traceId / spanId slots are wired properly in stage 17 (Micrometer Tracing). Until then the
+    # MDC keys are simply empty, so the format does not have to change later.
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [%X{traceId:-},%X{spanId:-}] %-40.40logger{39} : %m%n"

@@ -1,16 +1,20 @@
-# Compiled class file
+# --- Secrets: never commit these ---
+.env
+*.pem
+*.p12
+*.jks
+
+# --- Build output ---
+target/
+build/
 *.class
 
-# Log file
+# --- Logs / crash dumps ---
 *.log
+hs_err_pid*
+replay_pid*
 
-# BlueJ files
-*.ctxt
-
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-
-# Package Files #
+# --- Packaged artifacts ---
 *.jar
 *.war
 *.nar
@@ -18,7 +22,27 @@
 *.zip
 *.tar.gz
 *.rar
+# Must come after *.jar - the last matching rule wins. This wrapper uses
+# distributionType=only-script so no jar is committed today, but regenerating the wrapper with
+# `-Dtype=bin` would produce one, and a silently ignored wrapper jar breaks ./mvnw for everyone
+# who clones the repo.
+!.mvn/wrapper/maven-wrapper.jar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
+# --- IDE ---
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+nbproject/private/
+
+# --- macOS ---
+.DS_Store
+
+# --- Misc ---
+*.ctxt
+.mtj.tmp/
+HELP.md
