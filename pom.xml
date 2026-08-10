@@ -121,6 +121,20 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- Tracing. Generates a trace id per request and propagates it across the WebClient call and
+             the Kafka producer/consumer, so one identifier follows a request through every hop. Also
+             publishes traceId/spanId into the MDC, which is what makes the log pattern useful. No
+             exporter is configured: correlation in logs works without a collector, and adding Zipkin
+             or OTLP later is one dependency. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+        </dependency>
+        <!-- Prometheus-format metrics at /actuator/prometheus. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.projectlombok</groupId>

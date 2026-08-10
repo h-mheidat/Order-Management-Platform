@@ -199,7 +199,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       # DEV ONLY. Exposes component details (db / redis / kafka) unauthenticated, which is how
@@ -235,6 +235,21 @@ management:
   info:
     env:
       enabled: true
+  tracing:
+    sampling:
+      # Every request is traced in development. In production this belongs well below 1.0 - see
+      # application-prod.yml - because tracing every request costs both throughput and storage.
+      probability: ${TRACING_SAMPLE_RATE:1.0}
+  metrics:
+    tags:
+      # Stamped on every metric so a dashboard can tell instances and environments apart. Without
+      # this, three instances' latencies average into one meaningless line.
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        # Histogram buckets for HTTP latency, so real percentiles can be computed across instances.
+        # Client-side percentiles cannot be aggregated - averaging p99s is not a p99.
+        http.server.requests: true
 
 logging:
   level:
@@ -243,4 +258,6 @@ logging:
   pattern:
     # traceId / spanId slots are wired properly in stage 17 (Micrometer Tracing). Until then the
     # MDC keys are simply empty, so the format does not have to change later.
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [%X{traceId:-},%X{spanId:-}] %-40.40logger{39} : %m%n"
+    # traceId and spanId are populated by Micrometer Tracing; correlationId by CorrelationIdFilter.
+    # Every line carries all three, so one grep follows a request across services and retries.
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [%X{traceId:-},%X{spanId:-},%X{correlationId:-}] %-40.40logger{39} : %m%n"
