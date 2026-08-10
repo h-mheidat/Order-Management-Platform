@@ -66,6 +66,15 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Registration and login must be reachable without a token.
                         .requestMatchers("/api/auth/register", "/api/auth/login").permitAll()
+                        // The OpenAPI document and Swagger UI. Open, because the whole point is to be
+                        // readable before you have a token - you need the spec to discover how to get
+                        // one. Safe only because springdoc is switched off entirely under the prod
+                        // profile: these matchers then guard paths that do not exist, rather than
+                        // publishing the API surface. If docs are ever wanted in a deployed
+                        // environment, they belong behind the ingress or on the management port, not
+                        // here.
+                        .requestMatchers("/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml",
+                                "/swagger-ui.html", "/swagger-ui/**").permitAll()
                         // Statistics are ADMIN-only and enforced twice - here and with
                         // @PreAuthorize on the method - so neither one alone is load-bearing.
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")

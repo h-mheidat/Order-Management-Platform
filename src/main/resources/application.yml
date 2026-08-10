@@ -187,6 +187,23 @@ resilience4j:
           # Never retry a 404 - the answer will not change, and three attempts only triple the load.
           - com.example.orders.exception.ResourceNotFoundException
 
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    # Alphabetical rather than declaration order, so the page does not reshuffle when a method moves.
+    operations-sorter: method
+    tags-sorter: alpha
+    # Collapsed by default: expanded, a dozen operations is a wall of text.
+    doc-expansion: none
+    # Keeps the token between page reloads, so you do not re-paste it after every refresh.
+    persist-authorization: true
+  # Actuator is intentionally absent from the document. It is infrastructure, not API, and in prod it
+  # is not even on this port.
+  show-actuator: false
+  default-produces-media-type: application/json
+
 server:
   port: ${SERVER_PORT:8080}
   error:
