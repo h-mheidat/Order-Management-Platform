@@ -28,6 +28,10 @@ import org.springframework.security.web.SecurityFilterChain;
  * login, {@code denyAll()} as the final rule - but requests now carry a bearer JWT, and endpoints are
  * opened one at a time.
  *
+ * <p>The actuator is not handled here at all - see {@code ActuatorSecurityConfig}, which owns an
+ * earlier-ordered chain for it. Infrastructure cannot authenticate, so those endpoints need a different
+ * rule than the {@code denyAll()} that ends this one.
+ *
  * <p>Two layers of authorization, on purpose:
  * <ul>
  *   <li><b>URL rules here</b> answer "may this role reach this endpoint at all". Coarse, and applied
@@ -45,6 +49,7 @@ import org.springframework.security.web.SecurityFilterChain;
 public class SecurityConfig {
 
     @Bean
+    @org.springframework.core.annotation.Order(2)
     SecurityFilterChain securityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder,
                                             RestAuthenticationEntryPoint authenticationEntryPoint,
                                             RestAccessDeniedHandler accessDeniedHandler)
@@ -61,8 +66,6 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Registration and login must be reachable without a token.
                         .requestMatchers("/api/auth/register", "/api/auth/login").permitAll()
-                        // Probes only. /actuator/metrics and the rest stay closed.
-                        .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         // Statistics are ADMIN-only and enforced twice - here and with
                         // @PreAuthorize on the method - so neither one alone is load-bearing.
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
