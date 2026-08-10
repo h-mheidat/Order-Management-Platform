@@ -82,6 +82,14 @@ spring:
       properties:
         enable.idempotence: true
 
+app:
+  jwt:
+    # No default. The application must fail to start without JWT_SECRET rather than fall back to a
+    # value that is committed to git - see JwtProperties.
+    secret: ${JWT_SECRET}
+    issuer: ${JWT_ISSUER:order-management-platform}
+    expiration: ${JWT_EXPIRATION:15m}
+
 server:
   port: ${SERVER_PORT:8080}
   error:
