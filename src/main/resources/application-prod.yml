@@ -58,6 +58,16 @@ server:
     include-stacktrace: never
     include-binding-errors: never
 
+springdoc:
+  # Off in production. A complete map of the API surface - every field, every role requirement - is free
+  # reconnaissance for anyone probing the service, and Swagger UI is a live HTML app with its own CVE
+  # history sitting on the public port. Consumers should take the spec from CI as a build artefact, which
+  # is also the only way they can diff it between releases.
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
 management:
   server:
     # Actuator on its own port, so it can be reached by the orchestrator and monitoring inside the
