@@ -94,6 +94,28 @@ Interactive docs while the app is running locally: **<http://localhost:8080/swag
 
 Register, log in, press **Authorize**, paste the token — then every endpoint is callable from the page.
 
+### Staff accounts
+
+`POST /api/auth/register` always creates a CUSTOMER — a `role` in the body is ignored. ADMIN and SUPPORT
+are created at startup instead, from environment variables, when `APP_SEED_ENABLED=true`:
+
+| Variable | Default |
+|---|---|
+| `APP_SEED_ENABLED` | `false` |
+| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_USERNAME` | `admin@test.local` / `admin` |
+| `SEED_ADMIN_PASSWORD` | **none — must be supplied** |
+| `SEED_SUPPORT_EMAIL` / `SEED_SUPPORT_USERNAME` | `support@test.local` / `support` |
+| `SEED_SUPPORT_PASSWORD` | **none — must be supplied** |
+
+Your `.env` already has working values. Three guards keep this out of production: the bean does not
+exist unless explicitly enabled, there is no default password (so enabling it without one fails
+startup), and the constructor throws under the `prod` profile — the context never refreshes and no
+port is opened, so a misconfigured deployment crash-loops instead of serving with a known-password
+admin.
+
+Seeding is idempotent and never touches an account that already exists, so it cannot overwrite a
+changed password or re-grant a role somebody removed.
+
 Both are **disabled under the `prod` profile**, so they are not reachable from the containerised stack.
 A complete map of the API surface is free reconnaissance, and Swagger UI is a live HTML app with its own
 CVE history. Consumers should take the spec from CI as a build artefact, which is also the only way to
