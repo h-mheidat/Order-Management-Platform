@@ -19,10 +19,12 @@ spring:
       pool-name: oms-hikari
 
   jpa:
-    # Flyway owns the schema. `validate` would fail at startup until stage 2 adds entities and
-    # migrations, so stage 1 stays at `none` and switches to `validate` in stage 2.
+    # Flyway owns the schema; Hibernate only checks that its mappings match what Flyway built.
+    # `validate` turns a mapping/migration mismatch into a startup failure instead of a
+    # confusing runtime error on the first query that touches the wrong column. Never `update`:
+    # that lets Hibernate silently alter a production schema.
     hibernate:
-      ddl-auto: none
+      ddl-auto: validate
     # Off deliberately. With open-in-view enabled the EntityManager stays open for the whole
     # request, lazy loads silently succeed inside the view layer, and N+1 problems become
     # invisible until production. Off means LazyInitializationException surfaces at dev time.
