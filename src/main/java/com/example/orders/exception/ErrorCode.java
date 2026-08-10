@@ -14,6 +14,12 @@ public enum ErrorCode {
 
     VALIDATION_ERROR(HttpStatus.BAD_REQUEST),
     INVALID_ORDER_STATUS_TRANSITION(HttpStatus.BAD_REQUEST),
+    /**
+     * The product exists but cannot be ordered right now. Distinct from
+     * {@link #PRODUCT_NOT_FOUND}: the caller referenced something real, so 404 would be misleading
+     * and would suggest the id was wrong rather than the stock.
+     */
+    PRODUCT_NOT_AVAILABLE(HttpStatus.BAD_REQUEST),
 
     /**
      * Deliberately covers both "no such email" and "wrong password". Distinguishing them turns the
