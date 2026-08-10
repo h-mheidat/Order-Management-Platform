@@ -1,6 +1,7 @@
 package com.example.orders.entity;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -62,8 +63,27 @@ public class OrderItem {
     public OrderItem(Long productId, int quantity, BigDecimal unitPrice) {
         this.productId = productId;
         this.quantity = quantity;
-        this.unitPrice = unitPrice;
+        this.unitPrice = normalize(unitPrice);
     }
+
+    /**
+     * Forces money to two decimal places at the boundary.
+     *
+     * <p>The scale of an inbound {@link BigDecimal} is whatever the upstream JSON happened to contain -
+     * {@code 25.5}, {@code 25.50} and {@code 25.500} are all equal in value but carry different scales,
+     * and that scale propagates through every multiplication and addition into the API response. Left
+     * alone, the same order total renders as "40.0" or "40.00" depending on how a supplier formatted
+     * their price feed.
+     *
+     * <p>HALF_UP rather than the default: a rounding mode has to be chosen explicitly for money, and
+     * HALF_UP is the one humans expect and accounting rules generally specify.
+     */
+    private static BigDecimal normalize(BigDecimal amount) {
+        return amount == null ? null : amount.setScale(SCALE, RoundingMode.HALF_UP);
+    }
+
+    /** Matches numeric(19,2) in the schema. */
+    private static final int SCALE = 2;
 
     /** Package-private: only {@link Order#addItem(OrderItem)} may set the back-reference. */
     void setOrder(Order order) {
@@ -77,7 +97,7 @@ public class OrderItem {
      * to happen. Stage 6 sums these with a Stream reduce to get the order total.
      */
     public BigDecimal lineTotal() {
-        return unitPrice.multiply(BigDecimal.valueOf(quantity));
+        return normalize(unitPrice.multiply(BigDecimal.valueOf(quantity)));
     }
 
     @Override
