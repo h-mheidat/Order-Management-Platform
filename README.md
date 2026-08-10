@@ -88,6 +88,16 @@ docker compose --profile tools up -d
 
 ## API
 
+Interactive docs while the app is running locally: **<http://localhost:8080/swagger-ui.html>**
+(raw spec at `/v3/api-docs`, YAML at `/v3/api-docs.yaml`).
+
+Register, log in, press **Authorize**, paste the token — then every endpoint is callable from the page.
+
+Both are **disabled under the `prod` profile**, so they are not reachable from the containerised stack.
+A complete map of the API surface is free reconnaissance, and Swagger UI is a live HTML app with its own
+CVE history. Consumers should take the spec from CI as a build artefact, which is also the only way to
+diff it between releases.
+
 | Method | Path | Who |
 |---|---|---|
 | POST | `/api/auth/register` | public — always creates a CUSTOMER |
