@@ -2,6 +2,8 @@ package com.example.orders.kafka;
 
 import com.example.orders.entity.ProcessedEvent;
 import com.example.orders.repository.ProcessedEventRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -36,9 +38,20 @@ public class OrderEventConsumer {
     private static final Logger log = LoggerFactory.getLogger(OrderEventConsumer.class);
 
     private final ProcessedEventRepository processedEvents;
+    private final Counter handled;
+    private final Counter duplicates;
 
-    OrderEventConsumer(ProcessedEventRepository processedEvents) {
+    OrderEventConsumer(ProcessedEventRepository processedEvents, MeterRegistry registry) {
         this.processedEvents = processedEvents;
+        this.handled = Counter.builder("orders.events.handled")
+                .description("Events processed for the first time")
+                .register(registry);
+        // Worth measuring rather than merely logging: a duplicate rate that is normally near zero and
+        // suddenly spikes means rebalances or publisher retries, which is a real signal. A rate that is
+        // always zero would suggest the de-duplication is never being exercised.
+        this.duplicates = Counter.builder("orders.events.duplicates")
+                .description("Redeliveries skipped because the event was already processed")
+                .register(registry);
     }
 
     @KafkaListener(topics = "${app.kafka.topics.orders}", groupId = "${spring.kafka.consumer.group-id}")
@@ -55,6 +68,7 @@ public class OrderEventConsumer {
 
         String eventId = envelope.eventId().toString();
         if (processedEvents.existsById(eventId)) {
+            duplicates.increment();
             log.debug("Skipping already-processed event {} ({} partition={} offset={})",
                     eventId, envelope.eventType(), partition, offset);
             return;
@@ -65,7 +79,9 @@ public class OrderEventConsumer {
             // Same transaction as the side effect above. saveAndFlush so the key violation surfaces
             // here, where it can be recognised as a duplicate, rather than at commit.
             processedEvents.saveAndFlush(new ProcessedEvent(eventId, envelope.eventType()));
+            handled.increment();
         } catch (DataIntegrityViolationException e) {
+            duplicates.increment();
             // Lost the race with a concurrent consumer of the same event. The side effect in this
             // transaction rolls back with it, so it happened exactly once overall.
             log.info("Event {} was processed concurrently by another consumer; discarding this copy",

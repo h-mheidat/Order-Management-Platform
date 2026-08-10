@@ -11,6 +11,8 @@ import com.example.orders.entity.OutboxEvent;
 import com.example.orders.repository.OutboxEventRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -68,14 +70,23 @@ public class OutboxPublisher {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final KafkaTopicProperties topics;
     private final ObjectMapper objectMapper;
+    private final Counter published;
+    private final Counter failed;
 
     OutboxPublisher(OutboxEventRepository outboxRepository,
                     KafkaTemplate<String, Object> kafkaTemplate,
-                    KafkaTopicProperties topics, ObjectMapper objectMapper) {
+                    KafkaTopicProperties topics, ObjectMapper objectMapper,
+                    MeterRegistry registry) {
         this.outboxRepository = outboxRepository;
         this.kafkaTemplate = kafkaTemplate;
         this.topics = topics;
         this.objectMapper = objectMapper;
+        this.published = Counter.builder("orders.outbox.published")
+                .description("Events successfully sent to Kafka")
+                .register(registry);
+        this.failed = Counter.builder("orders.outbox.send.failures")
+                .description("Send attempts that failed and will be retried")
+                .register(registry);
     }
 
     /**
@@ -124,6 +135,7 @@ public class OutboxPublisher {
                     .get(SEND_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
 
             event.markPublished(OffsetDateTime.now());
+            published.increment();
             return true;
 
         } catch (InterruptedException e) {
@@ -144,6 +156,7 @@ public class OutboxPublisher {
     }
 
     private void recordFailure(OutboxEvent event, Exception cause) {
+        failed.increment();
         event.recordFailedAttempt();
         if (event.getAttempts() >= MAX_ATTEMPTS) {
             log.error("Outbox event {} failed {} times and is being parked as FAILED",

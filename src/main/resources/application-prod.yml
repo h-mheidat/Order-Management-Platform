@@ -1,0 +1,98 @@
+# Production overrides. Activate with SPRING_PROFILES_ACTIVE=prod.
+#
+# The base application.yml is tuned for development: it exposes health details to anyone, traces every
+# request, and logs the application at DEBUG. Every one of those is correct locally and wrong in
+# production. This file is the difference, kept separate so the two sets of decisions cannot be
+# confused - and so nobody has to remember which of thirty settings to change under pressure.
+
+spring:
+  jpa:
+    hibernate:
+      # Never anything else here. `update` lets Hibernate alter a production schema based on whatever
+      # the deployed code happens to think the mapping is; `create-drop` destroys it.
+      ddl-auto: validate
+    # Belt and braces - already false in the base config, restated because the cost of it being on in
+    # production is invisible until load.
+    open-in-view: false
+    show-sql: false
+
+  datasource:
+    hikari:
+      # Sized from the environment, because the right number depends on the deployment: N instances x
+      # max-pool-size must stay comfortably under the database's max_connections, and an autoscaler
+      # changing N changes the answer.
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+      minimum-idle: ${DB_POOL_MIN_IDLE:5}
+      # Detects a pool leak in production instead of during an incident: a connection held longer than
+      # this is logged with the stack trace that took it.
+      leak-detection-threshold: 20000
+
+  flyway:
+    enabled: true
+    # Refuse to start rather than "fixing" a checksum mismatch. A migration whose content changed after
+    # being applied means the schema in front of us is not the one the code was tested against.
+    validate-on-migrate: true
+    clean-disabled: true
+
+  kafka:
+    listener:
+      concurrency: ${KAFKA_LISTENER_CONCURRENCY:3}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+
+server:
+  # Finish in-flight requests instead of dropping them on SIGTERM. Without this, every deploy returns
+  # errors to whoever was mid-request.
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: ${TOMCAT_MAX_THREADS:200}
+    # Bounded queue. An unbounded accept queue turns an overload into a growing pile of requests that
+    # will all time out anyway - shedding load is kinder than queueing it.
+    accept-count: 100
+    max-connections: 8192
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+
+management:
+  server:
+    # Actuator on its own port, so it can be reached by the orchestrator and monitoring inside the
+    # cluster while never being exposed through the public ingress.
+    port: ${MANAGEMENT_PORT:8081}
+  endpoints:
+    web:
+      exposure:
+        # Only what is needed to run the service. env, configprops, beans and heapdump all leak
+        # configuration or memory contents; loggers allows changing log levels at runtime.
+        include: health,prometheus
+  endpoint:
+    health:
+      # The development setting is `always`, which publishes every dependency's hostname and error text
+      # unauthenticated. This is the single most important line in this file.
+      show-details: when-authorized
+      show-components: when-authorized
+      probes:
+        enabled: true
+  info:
+    env:
+      # Would otherwise publish environment variables, which is where the secrets are.
+      enabled: false
+
+  tracing:
+    sampling:
+      # 10%. Tracing every request costs throughput and a great deal of storage; a tenth is plenty to
+      # characterise latency, and errors are still worth sampling at a higher rate if needed.
+      probability: ${TRACING_SAMPLE_RATE:0.1}
+
+logging:
+  level:
+    root: WARN
+    com.example.orders: INFO
+    # These two at DEBUG would log every statement and every bound parameter - including password
+    # hashes and customer data - at enormous volume.
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN

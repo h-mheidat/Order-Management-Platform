@@ -4,8 +4,12 @@ Training project following [`order-management-platform-training.md`](order-manag
 A modular monolith for order management: JWT auth with roles, JPA/PostgreSQL, Redis cache, Kafka with
 the outbox pattern, WebClient + Resilience4j, Testcontainers, Actuator.
 
-**Current stage: 02 — Database + Entities.** Schema and persistence model in place. No repositories,
-services, controllers or authentication flow yet — those are stages 3 and 5.
+**All 20 roadmap stages complete.** 76 tests green (`14` unit + `62` integration over Testcontainers).
+
+- [docs/SENIOR-REVIEW.md](docs/SENIOR-REVIEW.md) — the training document's senior questions, answered
+  against this code, plus the nine real bugs the tests caught during the build.
+- [docs/PRODUCTION-REVIEW.md](docs/PRODUCTION-REVIEW.md) — what is hardened, and the twelve things that
+  are honestly **not** production-ready.
 
 ## Stack
 
@@ -15,6 +19,7 @@ services, controllers or authentication flow yet — those are stages 3 and 5.
 | Spring Boot | 3.5.16 |
 | Build | Maven (via `./mvnw`, no local Maven install needed) |
 | Infrastructure | PostgreSQL 17, Redis 7.4, Kafka 4.0 (KRaft) — all via Docker Compose |
+| External | Product Service, stubbed by WireMock as a genuinely separate container |
 
 ## Prerequisites
 
@@ -67,11 +72,65 @@ curl -s localhost:8080/actuator/health | jq
 
 `status` must be `UP`, with `db`, `redis` and `kafka` all `UP` under `components`.
 
-Optional — Kafka UI on <http://localhost:8081> for inspecting topics and messages:
+### Everything in containers
+
+```bash
+docker compose --profile app up -d
+```
+
+The API is on `:8080`; actuator moves to `:8091` because the `prod` profile puts it on its own port.
+
+### Optional — Kafka UI for inspecting topics and messages
 
 ```bash
 docker compose --profile tools up -d
 ```
+
+## API
+
+| Method | Path | Who |
+|---|---|---|
+| POST | `/api/auth/register` | public — always creates a CUSTOMER |
+| POST | `/api/auth/login` | public — returns a bearer JWT |
+| POST | `/api/orders` | CUSTOMER |
+| GET | `/api/orders?status=&page=&size=` | CUSTOMER (own only) · SUPPORT/ADMIN (all) |
+| GET | `/api/orders/{id}` | owner or staff — others get 404, not 403 |
+| DELETE | `/api/orders/{id}` | owner or staff — cancels, never deletes |
+| PATCH | `/api/orders/{id}/status` | SUPPORT · ADMIN |
+| GET | `/api/admin/statistics` | ADMIN |
+
+Every failure returns one shape:
+
+```json
+{ "timestamp": "...", "status": 404, "error": "ORDER_NOT_FOUND", "message": "Order 100 was not found" }
+```
+
+Clients branch on `error`, never on `message`.
+
+## Seeing the resilience work
+
+The product service is a real container, so it can be broken on purpose:
+
+```bash
+docker compose stop product-service
+```
+
+Order creation then returns 503 `PRODUCT_SERVICE_UNAVAILABLE`, and after five failures the circuit
+breaker opens and stops calling upstream entirely. `GET /products/99` on the stub delays 5s to trip the
+timeout; `/products/500` returns 500 to exercise retry.
+
+```bash
+docker compose stop redis
+```
+
+Orders still work — reads fall through to PostgreSQL. Root health goes `DOWN`, readiness stays `UP`.
+
+```bash
+docker compose stop kafka
+```
+
+Orders still work. Events accumulate as `PENDING` in `outbox_events` and drain when the broker returns.
+Watch `orders_outbox_pending` climb at `:8091/actuator/prometheus`.
 
 ## Tests
 
@@ -146,11 +205,17 @@ Decisions worth knowing before touching this code:
   role check constraints, positive quantity, non-negative money, one line per product per order,
   and `PUBLISHED` outbox rows requiring a `published_at`.
 
-## Notes for the next stage
+## Conventions worth knowing before changing anything
 
-- `SecurityConfig` currently ends in `anyRequest().denyAll()`. Every endpoint added from stage 3
-  onward must be opened explicitly.
-- `management.endpoint.health.show-details: always` is **development only** and must be tightened
-  before any deployment (stage 19).
-- `OrderStatus.canTransitionTo` already defines the legal lifecycle transitions — stage 5 and the
-  SUPPORT status endpoint should use it rather than writing their own rules.
+- **`SecurityConfig` ends in `anyRequest().denyAll()`.** A new endpoint is unreachable until it is
+  opened explicitly. That is intentional: a forgotten route fails shut.
+- **The actuator has its own filter chain** (`ActuatorSecurityConfig`). Infrastructure cannot present a
+  bearer token, so it cannot live under the API's rules.
+- **Spring AOP proxies are bypassed by self-invocation.** `@Cacheable`, `@Transactional`, `@Retry` and
+  `@CircuitBreaker` all do nothing when called from another method of the same class. That is why
+  `OrderCache`, `ProductCatalog` and `ProductClient` are separate beans, and why order creation uses
+  `TransactionTemplate`.
+- **No network call inside a transaction.** Ever. See `OrderService.createOrder`.
+- **Money is `BigDecimal` at scale 2**, normalised at the boundary in `OrderItem`.
+- **`OrderStatus.canTransitionTo`** is the single definition of the legal lifecycle. Do not reimplement
+  it in a service.
