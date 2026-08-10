@@ -4,8 +4,8 @@ Training project following [`order-management-platform-training.md`](order-manag
 A modular monolith for order management: JWT auth with roles, JPA/PostgreSQL, Redis cache, Kafka with
 the outbox pattern, WebClient + Resilience4j, Testcontainers, Actuator.
 
-**Current stage: 01 — Project Setup.** Infrastructure and configuration only. No entities, no
-authentication flow, no business logic yet.
+**Current stage: 02 — Database + Entities.** Schema and persistence model in place. No repositories,
+services, controllers or authentication flow yet — those are stages 3 and 5.
 
 ## Stack
 
@@ -118,11 +118,39 @@ Redis and Kafka are deliberately **not** in the readiness group. A cache outage 
 (Postgres), and a broker outage is absorbed by the outbox — neither should pull an instance out of
 the load balancer. They remain visible on the root endpoint.
 
+## Data model
+
+```
+User 1 ──< Order 1 ──< OrderItem
+```
+
+Plus two infrastructure tables: `processed_events` (Kafka idempotency ledger, stage 12) and
+`outbox_events` (outbox pattern, stage 19).
+
+Decisions worth knowing before touching this code:
+
+- **Flyway owns the schema.** `ddl-auto` is `validate`, so a mapping that disagrees with a migration
+  fails at startup rather than on the first query. Never set it to `update`.
+- **`SEQUENCE`, not `IDENTITY`.** `IDENTITY` forces an immediate insert to read the generated key
+  back, which disables JDBC batching. The `INCREMENT BY 50` in each migration must stay equal to
+  `allocationSize = 50` in the matching entity.
+- **Every association is `LAZY`**, and `open-in-view` is off — so a missing `JOIN FETCH` shows up as
+  a `LazyInitializationException` in development instead of an N+1 in production.
+- **Money is `BigDecimal`** with `numeric(19,2)`; timestamps are `OffsetDateTime` with `timestamptz`.
+- **Email uniqueness is case-insensitive**, enforced by a functional index on `lower(email)`.
+  Look users up with `findByEmailIgnoreCase` so the query can use it.
+- **Entity `hashCode()` is a per-class constant** and `equals()` compares the id only once assigned.
+  A hash derived from a generated id changes at flush time, which breaks any `HashSet` the entity
+  was already in.
+- **Constraints are duplicated in the database**, not left to the service layer: order status and
+  role check constraints, positive quantity, non-negative money, one line per product per order,
+  and `PUBLISHED` outbox rows requiring a `published_at`.
+
 ## Notes for the next stage
 
-- The schema is owned by **Flyway** (`src/main/resources/db/migration`), not by Hibernate.
-  `spring.jpa.hibernate.ddl-auto` is `none` and becomes `validate` once stage 2 adds entities.
 - `SecurityConfig` currently ends in `anyRequest().denyAll()`. Every endpoint added from stage 3
   onward must be opened explicitly.
 - `management.endpoint.health.show-details: always` is **development only** and must be tightened
   before any deployment (stage 19).
+- `OrderStatus.canTransitionTo` already defines the legal lifecycle transitions — stage 5 and the
+  SUPPORT status endpoint should use it rather than writing their own rules.
