@@ -99,10 +99,30 @@ management:
       # stage 1 is verified. Stage 19 must change this to `when-authorized` before any deploy.
       show-details: always
       show-components: always
+      # Which dependencies are allowed to stop traffic reaching this instance.
+      #
+      # The root /actuator/health aggregates everything and is for humans and dashboards - it
+      # goes DOWN if any dependency is unhappy, which is what you want when debugging. What an
+      # orchestrator probes is different, and must only include dependencies the service cannot
+      # serve a request without:
+      #
+      #   db      -> in. No database, no orders. Nothing to fall back to.
+      #   redis   -> out. A cache is an optimisation; stage 7 falls back to Postgres on a miss
+      #              or an error. Failing readiness here would pull every instance out of the
+      #              load balancer over a slower-but-correct path.
+      #   kafka   -> out. This is exactly what the outbox pattern (stage 19) buys us: the order
+      #              and its event commit to Postgres in one transaction, and the publisher
+      #              drains the outbox when the broker returns. Order creation keeps working
+      #              through a broker outage, so a broker outage must not stop traffic.
+      #
+      # Both stay visible on the root endpoint - excluded from readiness is not the same as
+      # unmonitored. Alerting on them is stage 17's job.
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
   health:
-    # Separate liveness from readiness: liveness answers "should the orchestrator restart me",
-    # readiness answers "should traffic reach me". Redis being down is a readiness question at
-    # most - see the group definitions in stage 7.
     probes:
       enabled: true
   info:

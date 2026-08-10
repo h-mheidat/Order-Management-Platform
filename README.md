@@ -106,6 +106,18 @@ src/main/java/com/example/orders/
 
 Each package carries a `package-info.java` documenting its responsibility.
 
+## Health endpoints
+
+| Endpoint | Audience | Includes |
+|---|---|---|
+| `/actuator/health` | humans, dashboards | everything — goes `DOWN` if any dependency is unhappy |
+| `/actuator/health/readiness` | load balancer / orchestrator | `db` only |
+| `/actuator/health/liveness` | orchestrator restart decisions | process state only |
+
+Redis and Kafka are deliberately **not** in the readiness group. A cache outage has a fallback
+(Postgres), and a broker outage is absorbed by the outbox — neither should pull an instance out of
+the load balancer. They remain visible on the root endpoint.
+
 ## Notes for the next stage
 
 - The schema is owned by **Flyway** (`src/main/resources/db/migration`), not by Hibernate.
