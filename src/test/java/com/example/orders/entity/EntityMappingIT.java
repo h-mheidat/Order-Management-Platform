@@ -14,11 +14,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.hibernate.exception.ConstraintViolationException;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+import com.example.orders.support.Containers;
 
 /**
  * Verifies the stage 2 persistence model against a real PostgreSQL.
@@ -31,15 +30,14 @@ import org.testcontainers.utility.DockerImageName;
  *
  * <p>{@code @DataJpaTest} rolls each test back, so the tests do not interfere with one another.
  */
-@Testcontainers
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class EntityMappingIT {
 
-    @Container
-    @ServiceConnection
-    static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>(DockerImageName.parse("postgres:17-alpine"));
+    @DynamicPropertySource
+    static void containerProperties(DynamicPropertyRegistry registry) {
+        Containers.registerTo(registry);
+    }
 
     @Autowired
     EntityManager em;
