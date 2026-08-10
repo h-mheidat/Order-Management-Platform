@@ -1,0 +1,40 @@
+# Attaches a debugger to the containerised application. An overlay, not a replacement - always
+# passed alongside the base file, and always with the `app` profile:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.debug.yml --profile app up -d --build
+#
+# Then attach the IDE to localhost:5005 ("Attach to app in container" in .vscode/launch.json).
+#
+# Kept out of docker-compose.yml on purpose: an open JDWP port is remote code execution by design,
+# and a debug port that is merely "usually off" is a debug port that eventually ships.
+
+services:
+  app:
+    environment:
+      # The whole value is repeated because Compose replaces the Dockerfile's ENV rather than
+      # appending to it - dropping MaxRAMPercentage here would silently restore the JVM's default
+      # heap sizing, which is the exact container OOM the Dockerfile comment warns about.
+      #
+      # address=*:5005, not 5005: since Java 9 a bare port binds to loopback *inside* the container,
+      # so the published port below would connect to nothing and the IDE would time out.
+      #
+      # suspend=n so the container starts and passes its healthcheck whether or not anyone is
+      # attached. Switch to suspend=y to debug startup itself - Flyway migrations, bean wiring,
+      # KafkaConsumerConfig - but note the JVM then blocks until the debugger connects, so the
+      # healthcheck reports unhealthy and `depends_on` in anything downstream will wait forever.
+      JAVA_OPTS: >-
+        -XX:MaxRAMPercentage=75
+        -XX:+ExitOnOutOfMemoryError
+        -XX:+UseContainerSupport
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+    # The active profile is deliberately not overridden here. It stays whatever the base file
+    # resolves (prod unless .env says otherwise), because only application-prod.yml sets
+    # management.server.port=8081 - and 8081 is exactly what the base file's healthcheck probes.
+    # Switching this overlay to `dev` moves actuator back onto 8080, the healthcheck then gets a 404
+    # forever, and the container is reported unhealthy while serving traffic perfectly. If you do
+    # need the dev profile in a container, override the healthcheck along with it.
+
+    # Merged with the base file's ports, not substituted for them - 8080 and 8091 stay published.
+    ports:
+      - "${APP_DEBUG_PORT:-5005}:5005"

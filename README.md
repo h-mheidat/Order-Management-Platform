@@ -81,6 +81,35 @@ docker compose --profile app up -d
 
 The API is on `:8080`; actuator moves to `:8091` because the `prod` profile puts it on its own port.
 
+### Debugging
+
+Two configurations ship in `.vscode/launch.json`. Pick by where the bug lives.
+
+**Debug app (local JVM)** — the default choice. Infrastructure in containers, application on the host,
+so a code change is a restart rather than an image rebuild. Start `docker compose up -d`, then run the
+configuration. It reads `.env` and repoints the hostnames at the published ports, Kafka included:
+`localhost:29092`, the `PLAINTEXT_HOST` listener, never `kafka:9092`.
+
+**Attach to app in container** — for the bugs that only exist in the container: the `prod` profile,
+container DNS, the non-root user, the JVM sizing its heap from a memory limit. Bring the stack up with
+the debug overlay, which adds the JDWP agent and publishes `5005`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.debug.yml --profile app up -d --build
+```
+
+Then run the attach configuration. Two things to expect:
+
+- `--build` is not optional after an edit. The image compiles its own copy of `src/`, so without a
+  rebuild the debugger binds breakpoints to the previous build's line numbers and stops in the wrong
+  place — or silently not at all.
+- The agent runs with `suspend=n`, so the container boots whether or not a debugger is attached.
+  To debug startup itself — Flyway, bean wiring, `KafkaConsumerConfig` — switch it to `suspend=y`
+  in `docker-compose.debug.yml` and accept that the container reports unhealthy until you connect.
+
+The overlay is a separate file, and deliberately so: an open JDWP port is remote code execution by
+design. It never belongs in the default `docker compose up`.
+
 ### Optional — Kafka UI for inspecting topics and messages
 
 ```bash
