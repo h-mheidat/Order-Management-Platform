@@ -58,6 +58,12 @@ server:
     include-stacktrace: never
     include-binding-errors: never
 
+app:
+  seed:
+    # Belt and braces. StaffAccountSeeder already fails startup if it finds itself running under this
+    # profile; this makes the bean not exist in the first place, so neither guard is load-bearing alone.
+    enabled: false
+
 springdoc:
   # Off in production. A complete map of the API surface - every field, every role requirement - is free
   # reconnaissance for anyone probing the service, and Swagger UI is a live HTML app with its own CVE

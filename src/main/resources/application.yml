@@ -132,6 +132,23 @@ app:
     # connection instead of the timeout abandoning a request that still holds one open.
     response-timeout: 1500ms
 
+  seed:
+    # Creates the ADMIN and SUPPORT accounts that cannot be self-registered - registration always
+    # produces a CUSTOMER. Off unless switched on, so doing nothing gives you the safe state, and it
+    # refuses to start under the prod profile.
+    #
+    # No default password: enabling this without supplying one is a startup failure rather than a
+    # well-known credential.
+    enabled: ${APP_SEED_ENABLED:false}
+    admin:
+      username: ${SEED_ADMIN_USERNAME:admin}
+      email: ${SEED_ADMIN_EMAIL:admin@test.local}
+      password: ${SEED_ADMIN_PASSWORD:}
+    support:
+      username: ${SEED_SUPPORT_USERNAME:support}
+      email: ${SEED_SUPPORT_EMAIL:support@test.local}
+      password: ${SEED_SUPPORT_PASSWORD:}
+
   jwt:
     # No default. The application must fail to start without JWT_SECRET rather than fall back to a
     # value that is committed to git - see JwtProperties.
