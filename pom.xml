@@ -19,6 +19,9 @@
 
     <properties>
         <java.version>21</java.version>
+        <!-- Neither is managed by spring-boot-starter-parent, so both are pinned here. -->
+        <resilience4j.version>2.3.0</resilience4j.version>
+        <mockwebserver.version>4.12.0</mockwebserver.version>
     </properties>
 
     <dependencies>
@@ -80,6 +83,32 @@
             <artifactId>spring-kafka</artifactId>
         </dependency>
 
+        <!-- WebClient for the external product service. Brings the reactive stack in alongside
+             spring-boot-starter-web: the servlet stack still serves the API (web wins when both are
+             present), WebFlux is here only as an HTTP client. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+
+        <!-- Resilience4j: timeout, retry, circuit breaker and fallback around that client.
+             The AOP starter is required - without it the annotations are silently inert, which is
+             the worst possible failure mode for a resilience library. -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-reactor</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
         <!-- Observability -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -121,6 +150,15 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- A controllable HTTP server for the product-client tests. The interesting cases are an
+             upstream that hangs and one that fails, which have to be produced on demand rather
+             than stubbed. -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>mockwebserver</artifactId>
+            <version>${mockwebserver.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
