@@ -68,21 +68,63 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
     client-id: ${spring.application.name}
     consumer:
-      group-id: orders-service
+      group-id: ${KAFKA_CONSUMER_GROUP:orders-service}
       auto-offset-reset: earliest
       # Acknowledgement is handled by the container, not by the broker's auto-commit timer:
       # auto-commit can acknowledge a record whose handler later threw.
       enable-auto-commit: false
-    listener:
-      ack-mode: record
-    producer:
-      # Stage 19 talking point: acks=all + idempotence is what makes the outbox publisher safe
-      # to retry without duplicating or losing events.
-      acks: all
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # ErrorHandlingDeserializer wraps the real one. Without it, a message that cannot be
+      # deserialized throws before the listener is ever reached, so no error handler can route it
+      # away - the container simply retries the same bytes forever and the partition stops.
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
       properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        # Deserialize only into our own packages. The default is to trust the class named in the
+        # message headers, which lets a producer on the topic choose which class we instantiate.
+        spring.json.trusted.packages: com.example.orders.kafka
+        spring.json.value.default.type: com.example.orders.kafka.EventEnvelope
+        # Ignore any type headers a producer sent and always use the type above, so a rename on
+        # their side cannot break deserialization on ours.
+        spring.json.use.type.headers: false
+      # Bounded so one slow poll cannot exceed max.poll.interval.ms and trigger a rebalance.
+      max-poll-records: 50
+    listener:
+      # Offsets are committed per record after the listener returns successfully. A batch ack would
+      # re-deliver an entire batch when its last record failed.
+      ack-mode: record
+      observation-enabled: true
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      # acks=all: the broker only confirms once every in-sync replica has the record. acks=1 would
+      # confirm from the leader alone and lose the record if that leader died before replicating -
+      # and the outbox row would already have been marked published.
+      acks: all
+      # Retry a transient send failure inside the client, before the outbox publisher has to.
+      retries: 3
+      properties:
+        # Idempotent producer: a retry that succeeded but whose ack was lost does not append the
+        # record twice. Required for exactly-once semantics on the broker side of a retry.
         enable.idempotence: true
+        # With idempotence on, more than 5 in-flight requests would reorder records on retry.
+        max.in.flight.requests.per.connection: 5
+        # Do not put Java class names in message headers: consumers would couple to our packages.
+        spring.json.add.type.headers: false
 
 app:
+  kafka:
+    topics:
+      # Prefixable per environment so a staging deployment cannot consume production's topic.
+      orders: ${KAFKA_TOPIC_ORDERS:orders}
+      # Defaults to <orders>.DLT when unset.
+      orders-dead-letter: ${KAFKA_TOPIC_ORDERS_DLT:}
+
+  outbox:
+    # How often to drain the outbox. Latency for events, not for orders - order creation never waits
+    # on Kafka.
+    poll-interval: ${OUTBOX_POLL_INTERVAL:1000}
+
   product-service:
     base-url: ${PRODUCT_SERVICE_URL:http://localhost:8090}
     connect-timeout: 1s
