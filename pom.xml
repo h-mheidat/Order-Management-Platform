@@ -77,6 +77,13 @@
             <artifactId>commons-pool2</artifactId>
         </dependency>
 
+        <!-- Caching abstraction (@Cacheable and friends). The Redis cache manager itself comes
+             from spring-data-redis; this brings the annotation support. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+
         <!-- Kafka -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>

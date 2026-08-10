@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import com.example.orders.cache.OrderCache;
 import com.example.orders.dto.CreateOrderRequest;
 import com.example.orders.dto.OrderItemRequest;
 import com.example.orders.dto.OrderResponse;
@@ -63,6 +64,7 @@ public class OrderService {
     private static final Logger log = LoggerFactory.getLogger(OrderService.class);
 
     private final OrderRepository orderRepository;
+    private final OrderCache orderCache;
     private final OutboxEventRepository outboxRepository;
     private final UserRepository userRepository;
     private final ProductCatalog productCatalog;
@@ -70,11 +72,13 @@ public class OrderService {
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
 
-    OrderService(OrderRepository orderRepository, OutboxEventRepository outboxRepository,
+    OrderService(OrderRepository orderRepository, OrderCache orderCache,
+                 OutboxEventRepository outboxRepository,
                  UserRepository userRepository, ProductCatalog productCatalog,
                  OrderMapper orderMapper, ObjectMapper objectMapper,
                  TransactionTemplate transactionTemplate) {
         this.orderRepository = orderRepository;
+        this.orderCache = orderCache;
         this.outboxRepository = outboxRepository;
         this.userRepository = userRepository;
         this.productCatalog = productCatalog;
@@ -130,12 +134,19 @@ public class OrderService {
      * exists, which is exactly the fact they are not entitled to - enumerate ids and you learn how
      * many orders the system holds and which ranges are live. Staff get the real answer.
      */
-    @Transactional(readOnly = true)
     public OrderResponse getOrder(AuthenticatedUser caller, Long orderId) {
-        Order order = orderRepository.findWithItemsById(orderId)
-                .filter(candidate -> caller.isStaff() || caller.owns(candidate.getCustomer().getId()))
-                .orElseThrow(() -> ResourceNotFoundException.order(orderId));
-        return orderMapper.toResponse(order);
+        // Not @Transactional: on a cache hit there is nothing to do in a database session, and opening
+        // a transaction to then not use it takes a connection out of the pool for no reason. The cache
+        // opens its own when it actually has to load.
+        OrderResponse order = orderCache.findById(orderId);
+
+        // Authorization happens here, on every request, against the freshly returned data - never
+        // inside the cached value. The cache stores the order; it must never store the decision about
+        // who may see it, or the second caller inherits the first caller's permissions.
+        if (!caller.isStaff() && !caller.owns(order.customerId())) {
+            throw ResourceNotFoundException.order(orderId);
+        }
+        return order;
     }
 
     /**
@@ -183,6 +194,7 @@ public class OrderService {
         // No explicit save: the entity is managed, so the change is flushed at commit. Calling save()
         // here would work but suggests it is required, which is how developers start calling it
         // everywhere and stop understanding when writes actually happen.
+        orderCache.evictAfterCommit(orderId);
         log.info("Cancelled order id={} by userId={}", orderId, caller.id());
         return orderMapper.toResponse(order);
     }
@@ -212,6 +224,7 @@ public class OrderService {
         }
 
         order.setStatus(newStatus);
+        orderCache.evictAfterCommit(orderId);
         log.info("Order id={} status {} -> {}", orderId, current, newStatus);
         return orderMapper.toResponse(order);
     }
