@@ -1,0 +1,52 @@
+{
+  "mappings": [
+    {
+      "name": "product 10 - normal",
+      "request": { "method": "GET", "urlPattern": "/products/10" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "id": 10, "name": "Mechanical Keyboard", "price": 25.50, "available": true }
+      }
+    },
+    {
+      "name": "product 20 - normal",
+      "request": { "method": "GET", "urlPattern": "/products/20" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "id": 20, "name": "27in Monitor", "price": 99.99, "available": true }
+      }
+    },
+    {
+      "name": "product 30 - out of stock, to exercise the unavailable path",
+      "request": { "method": "GET", "urlPattern": "/products/30" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "id": 30, "name": "Discontinued Mouse", "price": 9.99, "available": false }
+      }
+    },
+    {
+      "name": "product 99 - slow, to exercise the timeout and circuit breaker",
+      "request": { "method": "GET", "urlPattern": "/products/99" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "id": 99, "name": "Slow Product", "price": 1.00, "available": true },
+        "fixedDelayMilliseconds": 5000
+      }
+    },
+    {
+      "name": "product 500 - server error, to exercise retry",
+      "request": { "method": "GET", "urlPattern": "/products/500" },
+      "response": { "status": 500, "body": "upstream exploded" }
+    },
+    {
+      "name": "anything else - not found",
+      "priority": 10,
+      "request": { "method": "GET", "urlPattern": "/products/.*" },
+      "response": { "status": 404 }
+    }
+  ]
+}

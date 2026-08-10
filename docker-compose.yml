@@ -101,6 +101,31 @@ services:
     networks: [oms-net]
     restart: unless-stopped
 
+  product-service:
+    # A stand-in for the real Product Service, which lives in another system. Modelling it as a
+    # separate container rather than a stub inside the application matters: it can be stopped,
+    # slowed down and made to fail, which is the only honest way to exercise the timeout, retry,
+    # circuit breaker and fallback in ProductClient.
+    #
+    #   docker compose stop product-service   -> watch the circuit breaker open
+    #   GET /products/99                      -> 5s delay, trips the timeout
+    #   GET /products/500                     -> 500, exercises retry
+    image: wiremock/wiremock:3.9.1
+    container_name: oms-product-service
+    command: ["--global-response-templating", "--disable-banner", "--verbose"]
+    volumes:
+      - ./docker/wiremock:/home/wiremock:ro
+    ports:
+      - "${PRODUCT_SERVICE_PORT:-8090}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/__admin/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    networks: [oms-net]
+    restart: unless-stopped
+
   kafka-ui:
     # Off by default. `docker compose --profile tools up -d` when you want to inspect
     # topics, partitions, consumer lag and message payloads (useful from stage 10 onward).

@@ -6,6 +6,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.UUID;
 
 import com.example.orders.support.IntegrationTestBase;
@@ -183,14 +185,26 @@ class AuthFlowIT extends IntegrationTestBase {
     }
 
     @Test
-    void rejectsATamperedToken() throws Exception {
+    void rejectsATokenWhoseClaimsHaveBeenEditedToEscalateRole() throws Exception {
         String token = registerAndLogin();
-        // Flip the last character of the signature. The claims still parse; the MAC no longer matches.
-        String tampered = token.substring(0, token.length() - 1)
-                + (token.endsWith("A") ? "B" : "A");
+        String[] parts = token.split("\\.");
 
-        mockMvc.perform(get("/api/orders")
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tampered))
+        // Rewrite the payload to claim ADMIN, then reattach the original signature. This is the
+        // attack the signature exists to stop, and it is a far better test than flipping a
+        // character of the signature itself: the last character of a 43-character base64url string
+        // carries only two significant bits, so a flip there frequently decodes to the same MAC
+        // bytes and the token stays valid.
+        String payload = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+        String escalated = payload.replace("\"CUSTOMER\"", "\"ADMIN\"");
+        assertThat(escalated).as("the payload must actually have been modified").isNotEqualTo(payload);
+
+        String forged = parts[0] + "."
+                + Base64.getUrlEncoder().withoutPadding()
+                        .encodeToString(escalated.getBytes(StandardCharsets.UTF_8))
+                + "." + parts[2];
+
+        mockMvc.perform(get("/api/admin/statistics")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + forged))
                 .andExpect(status().isUnauthorized());
     }
 

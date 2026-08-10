@@ -83,12 +83,67 @@ spring:
         enable.idempotence: true
 
 app:
+  product-service:
+    base-url: ${PRODUCT_SERVICE_URL:http://localhost:8090}
+    connect-timeout: 1s
+    # Below the 2s call timeout in ProductClient, so the socket gives up first and releases the
+    # connection instead of the timeout abandoning a request that still holds one open.
+    response-timeout: 1500ms
+
   jwt:
     # No default. The application must fail to start without JWT_SECRET rather than fall back to a
     # value that is committed to git - see JwtProperties.
     secret: ${JWT_SECRET}
     issuer: ${JWT_ISSUER:order-management-platform}
     expiration: ${JWT_EXPIRATION:15m}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      productService:
+        # Count-based, not time-based: deterministic and far easier to reason about in a test.
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        # Do not judge the upstream on one or two calls. Without a minimum, a single failure right
+        # after startup is a 100% failure rate and opens the breaker.
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        # A call slower than this counts as a failure even if it eventually succeeds. A dependency
+        # that answers in 4s is broken from the caller's point of view.
+        slow-call-duration-threshold: 2s
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        # Half-open lets a few probes through rather than reopening the floodgates at once, so a
+        # still-broken upstream is not hit by the full load the instant the timer expires.
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+        ignore-exceptions:
+          # A missing product is the upstream answering correctly. Counting 404s as failures would
+          # let a client requesting bad ids in a loop open the breaker for everyone else.
+          - com.example.orders.exception.ResourceNotFoundException
+  retry:
+    instances:
+      productService:
+        max-attempts: 3
+        wait-duration: 200ms
+        # Exponential backoff: fixed-interval retries from many callers re-synchronise into a
+        # thundering herd that arrives together and knocks the recovering service over again.
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        # Randomise the delay so retries from different instances do not land at the same instant.
+        enable-randomized-wait: true
+        randomized-wait-factor: 0.5
+        retry-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException$ServiceUnavailable
+          - org.springframework.web.reactive.function.client.WebClientResponseException$InternalServerError
+          - org.springframework.web.reactive.function.client.WebClientResponseException$GatewayTimeout
+        ignore-exceptions:
+          # Never retry a 404 - the answer will not change, and three attempts only triple the load.
+          - com.example.orders.exception.ResourceNotFoundException
 
 server:
   port: ${SERVER_PORT:8080}
