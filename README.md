@@ -4,7 +4,8 @@ Training project following [`order-management-platform-training.md`](order-manag
 A modular monolith for order management: JWT auth with roles, JPA/PostgreSQL, Redis cache, Kafka with
 the outbox pattern, WebClient + Resilience4j, Testcontainers, Actuator.
 
-**All 20 roadmap stages complete.** 76 tests green (`14` unit + `62` integration over Testcontainers).
+**All 20 roadmap stages complete, plus OpenAPI.** 84 tests green (`14` unit + `70` integration over
+Testcontainers).
 
 - [docs/SENIOR-REVIEW.md](docs/SENIOR-REVIEW.md) — the training document's senior questions, answered
   against this code, plus the nine real bugs the tests caught during the build.
