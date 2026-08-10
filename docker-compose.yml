@@ -114,7 +114,11 @@ services:
     container_name: oms-product-service
     command: ["--global-response-templating", "--disable-banner", "--verbose"]
     volumes:
-      - ./docker/wiremock:/home/wiremock:ro
+      # Only the mappings directory, never /home/wiremock itself. That path is the image's WORKDIR, and
+      # bind-mounting over a WORKDIR leaves the container with a working directory outside its mount
+      # namespace - `docker exec` then fails, which silently breaks the healthcheck below while the
+      # service itself keeps serving requests perfectly.
+      - ./docker/wiremock/mappings:/home/wiremock/mappings:ro
     ports:
       - "${PRODUCT_SERVICE_PORT:-8090}:8080"
     healthcheck:
@@ -141,6 +145,67 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+    networks: [oms-net]
+    restart: unless-stopped
+
+  app:
+    # Behind a profile so the default `docker compose up -d` still brings up only infrastructure,
+    # which is what you want while developing against a locally-run application:
+    #
+    #   docker compose up -d                    infrastructure only, run the app from your IDE
+    #   docker compose --profile app up -d      the whole system in containers
+    #
+    # Bundling the app into the default set would mean every infrastructure restart rebuilding it.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: oms/orders:latest
+    container_name: oms-app
+    profiles: [app]
+    environment:
+      # Hostnames, not localhost: inside the network these resolve to the other containers, and the
+      # Kafka address is the INTERNAL listener (kafka:9092), not the host-facing one.
+      DB_HOST: postgres
+      DB_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PRODUCT_SERVICE_URL: http://product-service:8080
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER:-order-management-platform}
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+      # The management port, exposed separately. In a real deployment only this one is reachable from
+      # the cluster's monitoring and the ingress never sees it - which is the reason application-prod.yml
+      # moves actuator off the API port in the first place.
+      - "${APP_MANAGEMENT_PORT:-8091}:8081"
+    depends_on:
+      # service_healthy, not service_started: a container that has been created is not a database
+      # that accepts connections, and Flyway would fail on the first migration.
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+    healthcheck:
+      # Port 8081, not 8080: the prod profile moves actuator to its own port, so probing the API port
+      # returns 404 and the container is reported unhealthy while serving traffic perfectly.
+      #
+      # Readiness, not the root endpoint - so a Redis blip does not mark the app unhealthy and get it
+      # restarted. Same reasoning as the health groups in application.yml.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health/readiness | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
     networks: [oms-net]
     restart: unless-stopped
 
